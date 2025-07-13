@@ -1,33 +1,52 @@
-import {
-  addNewConnectedUser,
-  getOnlineUsers,
-} from "../socket/connectedUsers.js";
-
+import winston from 'winston';
+import mongoose from 'mongoose';
+import { addNewConnectedUser, getOnlineUsers } from '../socket/connectedUsers.js';
 import {
   updateUsersInvitations,
   updateUsersFriendsList,
   updateUsersGroupChatList,
-  updateRooms,
   initialRoomsUpdate,
-} from "./notifyConnectedSockets.js";
+} from './notifyConnectedSockets.js';
 
-const newConnectionHandler = (socket, io) => {
-  addNewConnectedUser({ socketId: socket.id, userId: socket.user.userId });
+const logger = winston.createLogger({
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  transports: [new winston.transports.Console()],
+});
 
-  // emit online users to all connected users
-  io.emit("online-users", getOnlineUsers());
+/**
+ * Handle new socket connection
+ * @param {Object} socket - Socket.IO socket instance
+ * @param {Object} io - Socket.IO server instance
+ */
+const newConnectionHandler = async (socket, io) => {
+  try {
+    const userId = socket.user.userId;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      logger.warn(`Invalid userId on connection: ${userId}`);
+      socket.emit('error', { success: false, message: 'Invalid user ID' });
+      return;
+    }
 
-  // send the list of invitations to all the active connections of this user(userId)
-  updateUsersInvitations(socket.user.userId);
+    await addNewConnectedUser({ socketId: socket.id, userId });
 
-  // send user's friends to all the active connections of this user(userId)
-  updateUsersFriendsList(socket.user.userId);
+    const onlineUsers = await getOnlineUsers();
+    io.emit('online-users', { success: true, onlineUsers });
 
-  // send user's groupChats to all the active connections of this user(userId)
-  updateUsersGroupChatList(socket.user.userId);
+    await Promise.all([
+      updateUsersInvitations(userId),
+      updateUsersFriendsList(userId),
+      updateUsersGroupChatList(userId),
+      initialRoomsUpdate(userId, socket.id),
+    ]);
 
-  // emit active rooms to the new active connection of this user
-  initialRoomsUpdate(socket.user.userId, socket.id);
+    logger.info(`New connection for user ${userId}, socketId=${socket.id}`);
+  } catch (err) {
+    logger.error(`New connection error for socket ${socket.id}:`, err);
+    socket.emit('error', {
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message,
+    });
+  }
 };
 
 export default newConnectionHandler;

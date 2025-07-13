@@ -1,70 +1,30 @@
-import mongoose, { Schema } from "mongoose";
+import mongoose from 'mongoose';
 
-const friendInvitationSchema = new Schema(
+/**
+ * Friend Invitation Schema for managing friend requests
+ * @typedef {Object} FriendInvitation
+ * @property {mongoose.Types.ObjectId} senderId - ID of the user sending the invitation
+ * @property {mongoose.Types.ObjectId} receiverId - ID of the user receiving the invitation
+ * @property {Date} createdAt - Timestamp when the invitation was created
+ * @property {Date} updatedAt - Timestamp when the invitation was last updated
+ */
+const friendInvitationSchema = new mongoose.Schema(
   {
-    // User sending the invitation
     senderId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
+      ref: 'User',
+      required: [true, 'Sender ID is required'],
     },
-    // User who is being invited
     receiverId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    // Status of the invitation
-    status: {
-      type: String,
-      enum: ['pending', 'accepted', 'rejected', 'cancelled'],
-      default: 'pending',
-    },
-    // Optional message with the invitation
-    message: {
-      type: String,
-      maxlength: 200,
-      trim: true,
-    },
-    // When the invitation expires (optional)
-    expiresAt: {
-      type: Date,
-      default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+      ref: 'User',
+      required: [true, 'Receiver ID is required'],
     },
   },
-  { 
-    timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true }
-  }
+  { timestamps: true }
 );
 
-// Indexes for performance
-friendInvitationSchema.index({ senderId: 1, receiverId: 1 }, { unique: true });
-friendInvitationSchema.index({ receiverId: 1, status: 1 });
-friendInvitationSchema.index({ senderId: 1, status: 1 });
-friendInvitationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-
 // Prevent duplicate invitations
-friendInvitationSchema.pre('save', async function(next) {
-  if (this.isNew) {
-    const existingInvitation = await this.constructor.findOne({
-      $or: [
-        { senderId: this.senderId, receiverId: this.receiverId },
-        { senderId: this.receiverId, receiverId: this.senderId }
-      ],
-      status: 'pending'
-    });
-    
-    if (existingInvitation) {
-      const error = new Error('Friend invitation already exists');
-      error.statusCode = 409;
-      return next(error);
-    }
-  }
-  next();
-});
+friendInvitationSchema.index({ senderId: 1, receiverId: 1 }, { unique: true });
 
-const FriendInvitation = mongoose.model("FriendInvitation", friendInvitationSchema);
-
-export default FriendInvitation;
+export default mongoose.model('FriendInvitation', friendInvitationSchema);

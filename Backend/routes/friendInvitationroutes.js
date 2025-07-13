@@ -1,98 +1,37 @@
 import express from 'express';
-import { body } from 'express-validator';
-import {
-  inviteFriend,
-  acceptInvitation,
-  rejectInvitation,
-  cancelInvitation,
-  removeFriend,
-  blockUser,
-  unblockUser,
-  getFriendInvitations,
-  getSentInvitations,
-  getFriendsList,
-  getBlockedUsers,
-} from '../controllers/friendController.js';
+import Joi from 'joi';
+import JoiObjectId from 'joi-objectid';
+import { createValidator } from 'express-joi-validation';
+import { inviteFriend, acceptInvitation, rejectInvitation, removeFriend } from '../controllers/friendController.js';
 import requireAuth from '../middlewares/requireAuth.js';
 import { friendRequestLimiter } from '../middlewares/rateLimiting.js';
-import { handleValidationErrors, asyncHandler } from '../middlewares/validation.js';
 
+Joi.objectId = JoiObjectId(Joi);
 const router = express.Router();
+const validator = createValidator({ passError: true });
 
-// Send friend invitation
-router.post(
-  '/invite',
-  requireAuth,
-  friendRequestLimiter,
-  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
-  handleValidationErrors,
-  asyncHandler(inviteFriend)
-);
+const invitationSchema = Joi.object({
+  email: Joi.string().email().required(),
+});
 
-// Accept friend invitation
-router.post(
-  '/accept',
-  requireAuth,
-  body('invitationId').isMongoId().withMessage('Valid invitation ID is required'),
-  handleValidationErrors,
-  asyncHandler(acceptInvitation)
-);
+const approveInvitationSchema = Joi.object({
+  invitationId: Joi.objectId().required(),
+});
 
-// Reject friend invitation
-router.post(
-  '/reject',
-  requireAuth,
-  body('invitationId').isMongoId().withMessage('Valid invitation ID is required'),
-  handleValidationErrors,
-  asyncHandler(rejectInvitation)
-);
+const removeFriendSchema = Joi.object({
+  friendId: Joi.objectId().required(),
+});
 
-// Cancel sent invitation
-router.post(
-  '/cancel',
-  requireAuth,
-  body('invitationId').isMongoId().withMessage('Valid invitation ID is required'),
-  handleValidationErrors,
-  asyncHandler(cancelInvitation)
-);
+router.post('/invitations', requireAuth, friendRequestLimiter, validator.body(invitationSchema), inviteFriend);
+router.post('/invitations/accept', requireAuth, validator.body(approveInvitationSchema), acceptInvitation);
+router.post('/invitations/reject', requireAuth, validator.body(approveInvitationSchema), rejectInvitation);
+router.post('/friends/remove', requireAuth, validator.body(removeFriendSchema), removeFriend);
 
-// Remove friend
-router.post(
-  '/remove',
-  requireAuth,
-  body('friendId').isMongoId().withMessage('Valid friend ID is required'),
-  handleValidationErrors,
-  asyncHandler(removeFriend)
-);
-
-// Block user
-router.post(
-  '/block',
-  requireAuth,
-  body('userId').isMongoId().withMessage('Valid user ID is required'),
-  handleValidationErrors,
-  asyncHandler(blockUser)
-);
-
-// Unblock user
-router.post(
-  '/unblock',
-  requireAuth,
-  body('userId').isMongoId().withMessage('Valid user ID is required'),
-  handleValidationErrors,
-  asyncHandler(unblockUser)
-);
-
-// Get received friend invitations
-router.get('/invitations', requireAuth, asyncHandler(getFriendInvitations));
-
-// Get sent friend invitations
-router.get('/sent', requireAuth, asyncHandler(getSentInvitations));
-
-// Get friends list
-router.get('/friends', requireAuth, asyncHandler(getFriendsList));
-
-// Get blocked users
-router.get('/blocked', requireAuth, asyncHandler(getBlockedUsers));
+router.use((err, req, res, next) => {
+  if (err.error?.isJoi) {
+    return res.status(400).json({ success: false, message: err.error.details[0].message });
+  }
+  next(err);
+});
 
 export default router;

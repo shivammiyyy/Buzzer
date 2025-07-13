@@ -1,170 +1,78 @@
 import axios from 'axios';
 
-const BASE_URL = 'http://localhost:5000/api';
-// For production:
-// const BASE_URL = 'https://talkhouse-server.onrender.com';
-
 const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL: import.meta.env.MODE === 'production' ? '/api' : 'http://localhost:5000/api',
+  withCredentials: true,
+  timeout: 10000,
 });
 
-// Attach JWT token automatically to requests if present
+// Request Interceptor for Authorization Header
 api.interceptors.request.use(
   (config) => {
-    const userDetails = localStorage.getItem('currentUser');
-    if (userDetails) {
-      try {
-        const token = JSON.parse(userDetails)?.token;
-        if (token) {
-          config.headers['Authorization'] = `Bearer ${token}`;
-        }
-      } catch (e) {
-        console.error("Failed to parse token:", e);
-      }
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
-  (err) => Promise.reject(err)
+  (error) => Promise.reject(error)
 );
 
-// Logout utility
-const logOut = () => {
-  localStorage.clear();
-  window.location.pathname = '/login';
+// Response Interceptor for handling errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response) {
+      switch (error.response.status) {
+        case 401:
+          localStorage.removeItem('token');
+          window.location.href = '/login';
+          break;
+        case 404:
+          return Promise.reject(new Error('Resource not found'));
+        default:
+          return Promise.reject(error);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// ✅ Auth API
+export const authApi = {
+  signup: (data) => api.post('/auth/signup', data),
+  login: (credentials) => api.post('/auth/login', credentials),
+  getMe: () => api.get('/auth/me'),
+  logout: () => api.post('/auth/logout'),
 };
 
-// Centralized error handler
-const checkForAuthorization = (error) => {
-  const status = error?.response?.status;
-  if (status === 401 || status === 403) {
-    logOut();
-  }
+// ✅ User API
+export const userApi = {
+  updateProfile: (data) => api.put('/users/profile', data),
+  savePushSubscription: (subscription) => api.post('/users/push-subscription', { subscription }),
+  searchUsers: (query) => api.get(`/users?search=${encodeURIComponent(query)}`),
 };
 
-// === AUTH ===
-export const login = async (data) => {
-  try {
-    const response = await api.post('/auth/login', data);
-    return response.data;
-  } catch (error) {
-    checkForAuthorization(error);
-    return { error: true, message: error.response?.data || error.message };
-  }
+// ✅ Friend API
+export const friendApi = {
+  inviteFriend: (email) => api.post('/friends/invitations', { email }),
+  acceptInvitation: (invitationId) => api.post('/friends/invitations/accept', { invitationId }),
+  rejectInvitation: (invitationId) => api.post('/friends/invitations/reject', { invitationId }),
+  removeFriend: (friendId) => api.post('/friends/friends/remove', { friendId }),
+  getInvitations: () => api.get('/friends/invitations'), // make sure this is supported
 };
 
-export const register = async (data) => {
-  try {
-    const response = await api.post('/auth/register', data);
-    return response.data;
-  } catch (error) {
-    checkForAuthorization(error);
-    return { error: true, message: error.response?.data || error.message };
-  }
+// ✅ Group Chat API
+export const groupChatApi = {
+  createGroup: (data) => api.post('/groupChat/create', data),
+  addMembers: (data) => api.post('/groupChat/add-members', data),
+  leaveGroup: (groupChatId) => api.post('/groupChat/leave', { groupChatId }),
+  deleteGroup: (groupChatId) => api.post('/groupChat/delete', { groupChatId }),
 };
 
-export const getMe = async () => {
-  try {
-    const response = await api.get('/auth/me');
-    return response.data;
-  } catch (error) {
-    checkForAuthorization(error);
-    return {
-      error: true,
-      statusCode: error?.response?.status,
-      message: error?.response?.data || error.message,
-    };
-  }
+// ✅ Recommendation API
+export const recommendationApi = {
+  getRecommendations: (limit = 10) => api.get(`/recommendations?limit=${encodeURIComponent(limit)}`),
 };
 
-// === SUBSCRIPTION ===
-export const saveUserSubscription = async (data) => {
-  try {
-    const response = await api.post('/auth/subscribe', data);
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-export const removeUserSubscription = async (data) => {
-  try {
-    const response = await api.post('/auth/unsubscribe', data);
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-// === FRIEND INVITATIONS ===
-export const inviteFriendRequest = async (data) => {
-  try {
-    const response = await api.post('/invite-friend/invite', data);
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-export const acceptFriendRequest = async (invitationId) => {
-  try {
-    const response = await api.post('/invite-friend/accept', { invitationId });
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-export const rejectFriendRequest = async (invitationId) => {
-  try {
-    const response = await api.post('/invite-friend/reject', { invitationId });
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-export const removeFriend = async (data) => {
-  try {
-    const response = await api.post('/invite-friend/remove', data);
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-// === GROUP CHAT ===
-export const createGroupChat = async (name) => {
-  try {
-    const response = await api.post('/group-chat', { name });
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-export const addMembersToGroup = async (data) => {
-  try {
-    const response = await api.post('/group-chat/add', data);
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-export const leaveGroup = async (data) => {
-  try {
-    const response = await api.post('/group-chat/leave', data);
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
-
-export const deleteGroup = async (data) => {
-  try {
-    const response = await api.post('/group-chat/delete', data);
-    return response.data;
-  } catch (error) {
-    return { error: true, message: error.response?.data || error.message };
-  }
-};
+export default api;

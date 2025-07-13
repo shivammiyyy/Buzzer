@@ -1,103 +1,48 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { useDispatch } from "react-redux";
-import { useAppSelector } from "../store";
-import { loginUser } from "../actions/authActions";
-import { validateLoginForm } from "../utils/validators";
-import AuthBox from "../components/AuthBox"; // This should also be Tailwind converted if using MUI inside
-import clsx from "clsx";
+// src/pages/Login.jsx
+import { useState } from 'react';
+import { useDispatch } from 'react-redux';
+import { loginUser } from '../features/authSlice.js';
 
 const Login = () => {
-  const navigate = useNavigate();
   const dispatch = useDispatch();
-  const [credentials, setCredentials] = useState({ email: "", password: "" });
-  const [isFormValid, setIsFormValid] = useState(false);
-
-  const { error, errorMessage, userDetails } = useAppSelector(
-    (state) => state.auth
-  );
+  const [formData, setFormData] = useState({ email: '', password: '' });
 
   const handleChange = (e) => {
-    setCredentials({ ...credentials, [e.target.name]: e.target.value });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleLogin = () => {
-    dispatch(loginUser(credentials));
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    dispatch(loginUser(formData));
   };
-
-  useEffect(() => {
-    setIsFormValid(validateLoginForm(credentials));
-  }, [credentials]);
-
-  useEffect(() => {
-    if (userDetails?.token) {
-      navigate("/dashboard");
-    }
-  }, [userDetails, navigate]);
 
   return (
-    <AuthBox>
-      <h2 className="text-white text-2xl font-semibold">Welcome Back!</h2>
-      <p className="text-gray-400">Happy to see you again!</p>
-
-      <div className="flex flex-col w-full mt-4">
-        <label className="text-gray-400 uppercase font-semibold text-sm mb-1">
-          Email
-        </label>
+    <div className="flex justify-center items-center min-h-screen bg-gray-100">
+      <form onSubmit={handleSubmit} className="bg-white p-8 rounded shadow-md w-full max-w-md">
+        <h2 className="text-2xl font-bold mb-6 text-center">Login</h2>
         <input
           type="email"
           name="email"
-          value={credentials.email}
+          placeholder="Email"
+          value={formData.email}
           onChange={handleChange}
-          placeholder="Enter your email"
-          className="bg-[#35393f] text-gray-200 border border-black rounded px-2 py-2 text-sm outline-none"
+          className="w-full p-2 mb-4 border border-gray-300 rounded"
+          required
         />
-      </div>
-
-      <div className="flex flex-col w-full mt-4">
-        <label className="text-gray-400 uppercase font-semibold text-sm mb-1">
-          Password
-        </label>
         <input
           type="password"
           name="password"
-          value={credentials.password}
+          placeholder="Password"
+          value={formData.password}
           onChange={handleChange}
-          placeholder="Enter password"
-          className="bg-[#35393f] text-gray-200 border border-black rounded px-2 py-2 text-sm outline-none"
+          className="w-full p-2 mb-4 border border-gray-300 rounded"
+          required
         />
-      </div>
-
-      <div
-        className="w-full mt-6"
-        title={
-          isFormValid
-            ? "Proceed to Login"
-            : "Enter correct email address and password should be greater than six characters"
-        }
-      >
-        <button
-          onClick={handleLogin}
-          disabled={!isFormValid}
-          className={clsx(
-            "w-full h-10 text-white font-medium text-base rounded",
-            isFormValid ? "bg-[#5865F2] hover:bg-[#4752c4]" : "bg-gray-500 cursor-not-allowed"
-          )}
-        >
-          Log In
+        <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
+          Login
         </button>
-      </div>
-
-      <p className="text-gray-500 text-sm mt-4">
-        Don't have an account?{" "}
-        <span
-          onClick={() => navigate("/register")}
-          className="text-[#00AFF4] font-medium cursor-pointer"
-        >
-          Register here
-        </span>
-      </p>
-    </AuthBox>
+      </form>
+    </div>
   );
 };
 

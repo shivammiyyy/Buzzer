@@ -1,43 +1,23 @@
 import express from 'express';
-import { body, query } from 'express-validator';
-import { 
-  getFriendRecommendations, 
-  searchUsers, 
-  getTrendingUsers 
-} from '../controllers/recommendationController.js';
+import Joi from 'joi';
+import { createValidator } from 'express-joi-validation';
+import { getRecommendedFriends } from '../controllers/recommendationController.js';
 import requireAuth from '../middlewares/requireAuth.js';
-import { handleValidationErrors, asyncHandler } from '../middlewares/validation.js';
 
 const router = express.Router();
+const validator = createValidator({ passError: true });
 
-// Get friend recommendations
-router.get(
-  '/friends',
-  requireAuth,
-  query('limit').optional().isInt({ min: 1, max: 50 }),
-  query('page').optional().isInt({ min: 1 }),
-  handleValidationErrors,
-  asyncHandler(getFriendRecommendations)
-);
+const recommendationSchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(50).default(10),
+});
 
-// Search users
-router.get(
-  '/search',
-  requireAuth,
-  query('query').notEmpty().isLength({ min: 2, max: 50 }),
-  query('limit').optional().isInt({ min: 1, max: 50 }),
-  query('page').optional().isInt({ min: 1 }),
-  handleValidationErrors,
-  asyncHandler(searchUsers)
-);
+router.get('/', requireAuth, validator.query(recommendationSchema), getRecommendedFriends);
 
-// Get trending users
-router.get(
-  '/trending',
-  requireAuth,
-  query('limit').optional().isInt({ min: 1, max: 50 }),
-  handleValidationErrors,
-  asyncHandler(getTrendingUsers)
-);
+router.use((err, req, res, next) => {
+  if (err.error?.isJoi) {
+    return res.status(400).json({ success: false, message: err.error.details[0].message });
+  }
+  next(err);
+});
 
 export default router;

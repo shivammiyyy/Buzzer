@@ -1,126 +1,68 @@
-import React, { useState, useEffect } from "react";
-import { useDispatch } from "react-redux";
-import { useNavigate } from "react-router-dom";
-import { useAppSelector } from "../store";
-import { registerUser } from "../actions/authActions";
-import { validateRegisterForm } from "../utils/validators";
-import AuthBox from "../components/AuthBox"; // Make sure this is also converted to Tailwind
+// Register.jsx
+import { useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { registerUser } from '../features/authSlice.js';
 
 const Register = () => {
-  const navigate = useNavigate();
   const dispatch = useDispatch();
-  const [credentials, setCredentials] = useState({
-    email: "",
-    password: "",
-    username: ""
-  });
-  const [isFormValid, setIsFormValid] = useState(false);
+  const { status, error } = useSelector((state) => state.auth);
 
-  const { userDetails } = useAppSelector((state) => state.auth);
+  const [formData, setFormData] = useState({
+    email: '',
+    password: '',
+    username: '',
+  });
 
   const handleChange = (e) => {
-    setCredentials({
-      ...credentials,
-      [e.target.name]: e.target.value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleRegister = () => {
-    dispatch(registerUser(credentials));
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    dispatch(registerUser(formData));
   };
-
-  useEffect(() => {
-    setIsFormValid(validateRegisterForm(credentials));
-  }, [credentials]);
-
-  useEffect(() => {
-    if (userDetails?.token) {
-      navigate("/dashboard");
-    }
-  }, [userDetails, navigate]);
 
   return (
-    <AuthBox>
-      <h2 className="text-white text-2xl font-semibold mb-1">Welcome!</h2>
-      <p className="text-gray-400 mb-4">Create an account to get started.</p>
-
-      {/* Username */}
-      <div className="flex flex-col w-full mb-4">
-        <label className="text-gray-400 uppercase text-sm font-semibold mb-1">
-          Username
-        </label>
+    <div className="max-w-md mx-auto p-6 mt-10 bg-white rounded shadow">
+      <h2 className="text-xl font-semibold mb-4">Register</h2>
+      <form onSubmit={handleSubmit} className="space-y-4">
         <input
           type="text"
           name="username"
-          placeholder="Enter your username"
-          value={credentials.username}
+          placeholder="Username"
+          value={formData.username}
           onChange={handleChange}
-          className="h-10 px-3 text-sm rounded border border-black bg-[#35393f] text-gray-200 outline-none"
+          className="w-full border px-3 py-2 rounded"
+          required
         />
-      </div>
-
-      {/* Email */}
-      <div className="flex flex-col w-full mb-4">
-        <label className="text-gray-400 uppercase text-sm font-semibold mb-1">
-          Email
-        </label>
         <input
           type="email"
           name="email"
-          placeholder="Enter your email"
-          value={credentials.email}
+          placeholder="Email"
+          value={formData.email}
           onChange={handleChange}
-          className="h-10 px-3 text-sm rounded border border-black bg-[#35393f] text-gray-200 outline-none"
+          className="w-full border px-3 py-2 rounded"
+          required
         />
-      </div>
-
-      {/* Password */}
-      <div className="flex flex-col w-full mb-4">
-        <label className="text-gray-400 uppercase text-sm font-semibold mb-1">
-          Password
-        </label>
         <input
           type="password"
           name="password"
-          placeholder="Enter password"
-          value={credentials.password}
+          placeholder="Password"
+          value={formData.password}
           onChange={handleChange}
-          className="h-10 px-3 text-sm rounded border border-black bg-[#35393f] text-gray-200 outline-none"
+          className="w-full border px-3 py-2 rounded"
+          required
         />
-      </div>
-
-      {/* Submit Button */}
-      <div
-        title={
-          isFormValid
-            ? "Proceed to Register"
-            : "Enter correct email address. Password should be greater than six characters and username should be between 3 and 12 characters!"
-        }
-      >
+        {error && <p className="text-red-500 text-sm">{error}</p>}
         <button
-          disabled={!isFormValid}
-          onClick={handleRegister}
-          className={`w-full h-10 text-white text-base font-medium rounded mt-2 ${
-            isFormValid
-              ? "bg-[#5865F2] hover:bg-[#4752c4]"
-              : "bg-gray-500 cursor-not-allowed"
-          }`}
+          type="submit"
+          className="bg-blue-600 text-white px-4 py-2 rounded w-full"
+          disabled={status === 'loading'}
         >
-          Sign Up
+          {status === 'loading' ? 'Registering...' : 'Register'}
         </button>
-      </div>
-
-      {/* Redirect */}
-      <p className="text-sm text-gray-500 mt-4">
-        Already have an account?{" "}
-        <span
-          className="text-[#00AFF4] font-medium cursor-pointer"
-          onClick={() => navigate("/login")}
-        >
-          Log In
-        </span>
-      </p>
-    </AuthBox>
+      </form>
+    </div>
   );
 };
 

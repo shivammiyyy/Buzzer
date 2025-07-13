@@ -1,156 +1,287 @@
-// controllers/groupChat.controller.js
-
+import mongoose from 'mongoose';
+import Joi from 'joi';
+import JoiObjectId from 'joi-objectid';
 import User from '../models/userModel.js';
 import GroupChat from '../models/groupChatModel.js';
+import sanitizeHtml from 'sanitize-html';
+import winston from 'winston';
 import { updateUsersGroupChatList } from '../socketControllers/notifyConnectedSockets.js';
 import sendPushNotification from '../socketControllers/notification.js';
+import { getServerSocketInstance } from '../socket/connectedUsers.js';
+
+Joi.objectId = JoiObjectId(Joi);
+
+const logger = winston.createLogger({
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  transports: [new winston.transports.Console()],
+});
+
+// Validation schemas
+const createGroupSchema = Joi.object({
+  name: Joi.string().min(3).max(50).required(),
+});
+
+const addMemberSchema = Joi.object({
+  friendIds: Joi.array().items(Joi.objectId()).min(1).required(),
+  groupChatId: Joi.objectId().required(),
+});
+
+const groupActionSchema = Joi.object({
+  groupChatId: Joi.objectId().required(),
+});
 
 /**
  * Create a new group chat
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
 export const createGroupChat = async (req, res) => {
   try {
+    const { error, value } = createGroupSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ success: false, message: error.details[0].message });
+    }
+
     const { userId } = req.user;
-    const { name } = req.body;
+    const { name } = value;
+    const sanitizedName = sanitizeHtml(name.trim(), { allowedTags: [] });
 
     const chat = await GroupChat.create({
-      name,
+      name: sanitizedName,
       participants: [userId],
       admin: userId,
     });
 
-    const currentUser = await User.findById(userId);
-    currentUser.groupChats.push(chat._id);
-    await currentUser.save();
-
+    await User.updateOne({ _id: userId }, { $push: { groupChats: chat._id } });
     updateUsersGroupChatList(userId.toString());
 
-    return res.status(201).send('Group created successfully');
-  } catch (error) {
-    console.error(error);
-    return res.status(500).send('Something went wrong. Please try again later');
+    // Emit friend recommendations update
+    const io = getServerSocketInstance();
+    if (io) {
+      io.to(userId).emit('friend-recommendations-update');
+    }
+
+    logger.info(`Group chat created: ${chat._id} by user ${userId}`);
+    return res.status(201).json({ success: true, message: 'Group created successfully', data: { groupChat: chat } });
+  } catch (err) {
+    logger.error(`Create group chat error for user ${req.user.userId}:`, err);
+    return res.status(500).json({
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message,
+    });
   }
 };
 
 /**
- * Add members to group
+ * Add members to a group chat
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
 export const addMemberToGroup = async (req, res) => {
   try {
+    const { error, value } = addMemberSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ success: false, message: error.details[0].message });
+    }
+
     const { userId } = req.user;
-    const { friendIds, groupChatId } = req.body;
+    const { friendIds, groupChatId } = value;
 
-    const groupChat = await GroupChat.findById(groupChatId);
-    if (!groupChat) return res.status(404).send("Group chat doesn't exist");
-    if (groupChat.admin.toString() !== userId) return res.status(403).send('Only admin can add members');
+    const groupChat = await GroupChat.findById(groupChatId).lean();
+    if (!groupChat) {
+      logger.warn(`Group chat not found: ${groupChatId}`);
+      return res.status(404).json({ success: false, message: "Group chat doesn't exist" });
+    }
+    if (groupChat.admin.toString() !== userId) {
+      logger.warn(`User ${userId} not authorized to add members to group ${groupChatId}`);
+      return res.status(403).json({ success: false, message: 'Only admin can add members' });
+    }
 
-    const friendsToAdd = friendIds.filter(id => !groupChat.participants.includes(id));
-    groupChat.participants.push(...friendsToAdd);
-    await groupChat.save();
+    const currentUser = await User.findById(userId).lean();
+    const friendsToAdd = friendIds.filter(
+      (id) => currentUser.friends.includes(id) && !groupChat.participants.includes(id)
+    );
+    if (friendsToAdd.length === 0) {
+      logger.warn(`No valid friends to add to group ${groupChatId}`);
+      return res.status(400).json({ success: false, message: 'No valid friends to add' });
+    }
 
-    const currentUser = await User.findById(userId);
+    await GroupChat.updateOne(
+      { _id: groupChatId },
+      { $addToSet: { participants: { $each: friendsToAdd } } }
+    );
 
+    await User.updateMany(
+      { _id: { $in: friendsToAdd } },
+      { $addToSet: { groupChats: groupChatId } }
+    );
+
+    const updatedGroupChat = await GroupChat.findById(groupChatId).lean();
     for (const friendId of friendsToAdd) {
-      const participant = await User.findById(friendId);
+      const participant = await User.findById(friendId).lean();
       if (participant) {
-        participant.groupChats.push(groupChatId);
-        await participant.save();
-
         updateUsersGroupChatList(friendId.toString());
-
         sendPushNotification({
           sender: currentUser,
           receiver: participant,
           message: {
-            content: `${currentUser.username} has added you to the group "${groupChat.name}"`,
-            _id: `${userId}-${participant._id}-${groupChat._id}-added`,
+            content: sanitizeHtml(
+              `${currentUser.username} has added you to the group "${updatedGroupChat.name}"`,
+              { allowedTags: [] }
+            ),
+            _id: `${userId}-${participant._id}-${groupChatId}-added`,
           },
         });
+
+        // Emit friend recommendations update
+        const io = getServerSocketInstance();
+        if (io) {
+          io.to(friendId).emit('friend-recommendations-update');
+        }
       }
     }
 
     updateUsersGroupChatList(groupChat.admin.toString());
-    return res.status(200).send('Members added successfully!');
-  } catch (error) {
-    console.error(error);
-    return res.status(500).send('Something went wrong. Please try again later');
+    logger.info(`Members added to group ${groupChatId} by user ${userId}`);
+    return res.status(200).json({ success: true, message: 'Members added successfully', data: { groupChat: updatedGroupChat } });
+  } catch (err) {
+    logger.error(`Add member to group error for user ${req.user.userId}:`, err);
+    return res.status(500).json({
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message,
+    });
   }
 };
 
 /**
  * Leave a group chat
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
 export const leaveGroup = async (req, res) => {
   try {
+    const { error, value } = groupActionSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ success: false, message: error.details[0].message });
+    }
+
     const { userId } = req.user;
-    const { groupChatId } = req.body;
+    const { groupChatId } = value;
 
-    const groupChat = await GroupChat.findById(groupChatId);
-    if (!groupChat) return res.status(404).send("Group chat doesn't exist");
+    const groupChat = await GroupChat.findById(groupChatId).lean();
+    if (!groupChat) {
+      logger.warn(`Group chat not found: ${groupChatId}`);
+      return res.status(404).json({ success: false, message: "Group chat doesn't exist" });
+    }
 
-    const currentUser = await User.findById(userId);
-    if (!currentUser) return res.status(404).send('User not found');
+    if (!groupChat.participants.includes(userId)) {
+      logger.warn(`User ${userId} not a participant in group ${groupChatId}`);
+      return res.status(400).json({ success: false, message: 'You are not a participant in this group' });
+    }
 
-    groupChat.participants = groupChat.participants.filter(
-      (id) => id.toString() !== userId.toString()
+    if (groupChat.admin.toString() === userId) {
+      logger.warn(`Admin ${userId} cannot leave group ${groupChatId}`);
+      return res.status(403).json({ success: false, message: 'Admin cannot leave the group; delete it instead' });
+    }
+
+    await GroupChat.updateOne(
+      { _id: groupChatId },
+      { $pull: { participants: userId } }
     );
-    await groupChat.save();
 
-    currentUser.groupChats = currentUser.groupChats.filter(
-      (id) => id.toString() !== groupChat._id.toString()
+    await User.updateOne(
+      { _id: userId },
+      { $pull: { groupChats: groupChatId } }
     );
-    await currentUser.save();
 
+    const currentUser = await User.findById(userId).lean();
     updateUsersGroupChatList(userId.toString());
 
-    for (const participantId of groupChat.participants) {
+    const updatedGroupChat = await GroupChat.findById(groupChatId).lean();
+    for (const participantId of updatedGroupChat.participants) {
       updateUsersGroupChatList(participantId.toString());
-
-      const receiver = await User.findById(participantId);
+      const receiver = await User.findById(participantId).lean();
       sendPushNotification({
         sender: currentUser,
         receiver,
         message: {
-          content: `${currentUser.username} has left the group!`,
-          _id: `${currentUser._id}-${participantId}-${groupChat._id}-left`,
+          content: sanitizeHtml(
+            `${currentUser.username} has left the group "${updatedGroupChat.name}"`,
+            { allowedTags: [] }
+          ),
+          _id: `${userId}-${participantId}-${groupChatId}-left`,
         },
       });
     }
 
-    return res.status(200).send('You have left the group!');
-  } catch (error) {
-    console.error(error);
-    return res.status(500).send('Something went wrong. Please try again later');
+    // Emit friend recommendations update
+    const io = getServerSocketInstance();
+    if (io) {
+      io.to(userId).emit('friend-recommendations-update');
+      updatedGroupChat.participants.forEach((participantId) => {
+        io.to(participantId.toString()).emit('friend-recommendations-update');
+      });
+    }
+
+    logger.info(`User ${userId} left group ${groupChatId}`);
+    return res.status(200).json({ success: true, message: 'You have left the group' });
+  } catch (err) {
+    logger.error(`Leave group error for user ${req.user.userId}:`, err);
+    return res.status(500).json({
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message,
+    });
   }
 };
 
 /**
  * Delete a group chat
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
 export const deleteGroup = async (req, res) => {
   try {
-    const { userId } = req.user;
-    const { groupChatId } = req.body;
-
-    const groupChat = await GroupChat.findById(groupChatId);
-    if (!groupChat) return res.status(404).send("Group chat doesn't exist");
-    if (groupChat.admin.toString() !== userId) return res.status(403).send('Only admins can delete the group');
-
-    for (const participantId of groupChat.participants) {
-      const participant = await User.findById(participantId);
-      if (participant) {
-        participant.groupChats = participant.groupChats.filter(
-          (chatId) => chatId.toString() !== groupChat._id.toString()
-        );
-        await participant.save();
-        updateUsersGroupChatList(participantId.toString());
-      }
+    const { error, value } = groupActionSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ success: false, message: error.details[0].message });
     }
 
-    await groupChat.deleteOne();
-    return res.status(200).send('Group deleted successfully!');
-  } catch (error) {
-    console.error(error);
-    return res.status(500).send('Something went wrong. Please try again later');
+    const { userId } = req.user;
+    const { groupChatId } = value;
+
+    const groupChat = await GroupChat.findById(groupChatId).lean();
+    if (!groupChat) {
+      logger.warn(`Group chat not found: ${groupChatId}`);
+      return res.status(404).json({ success: false, message: "Group chat doesn't exist" });
+    }
+    if (groupChat.admin.toString() !== userId) {
+      logger.warn(`User ${userId} not authorized to delete group ${groupChatId}`);
+      return res.status(403).json({ success: false, message: 'Only admins can delete the group' });
+    }
+
+    await User.updateMany(
+      { _id: { $in: groupChat.participants } },
+      { $pull: { groupChats: groupChatId } }
+    );
+
+    await GroupChat.deleteOne({ _id: groupChatId });
+
+    groupChat.participants.forEach((participantId) => {
+      updateUsersGroupChatList(participantId.toString());
+      // Emit friend recommendations update
+      const io = getServerSocketInstance();
+      if (io) {
+        io.to(participantId.toString()).emit('friend-recommendations-update');
+      }
+    });
+
+    logger.info(`Group ${groupChatId} deleted by user ${userId}`);
+    return res.status(200).json({ success: true, message: 'Group deleted successfully' });
+  } catch (err) {
+    logger.error(`Delete group error for user ${req.user.userId}:`, err);
+    return res.status(500).json({
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message,
+    });
   }
 };
